@@ -2,6 +2,10 @@
 //   src/devices/tpms_pmv107j.c  (PMV-107J, 315 MHz, 100 us half-bit)
 //   src/devices/tpms_toyota.c   (PMV-C210, 52 us half-bit)
 // Both are FSK, differential Manchester, CRC-8.
+//
+// rtl_433 decoders: Copyright (C) 2017 Christian W. Zuckschwerdt <zany@triq.net>,
+// PMV-107J based on work by Werner Johansson. Licensed GPL-2.0-or-later, as is
+// this project.
 
 #include "tpms_decode.h"
 

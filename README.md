@@ -63,3 +63,8 @@ cd test && cc -I../main -o /tmp/host_test host_test.c ../main/tpms_decode.c && /
 cd captures
 rtl_433 -f 315M -M level -M time:iso -F kv -F json:tpms.jsonl -S unknown
 ```
+
+## License
+
+GPL-2.0-or-later (see `LICENSE`). The TPMS decoders are ported from
+[rtl_433](https://github.com/merbanan/rtl_433), which is GPL-2.0-or-later.
