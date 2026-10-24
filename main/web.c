@@ -87,7 +87,16 @@ static void start_ap(void)
 {
     ESP_ERROR_CHECK(esp_netif_init());
     ESP_ERROR_CHECK(esp_event_loop_create_default());
-    esp_netif_create_default_wifi_ap();
+    esp_netif_t *ap = esp_netif_create_default_wifi_ap();
+    // No router option in the DHCP offer: with no default gateway on this
+    // network, phones keep using cellular for internet while joined. (DNS is
+    // off too, via CONFIG_LWIP_DHCPS_ADD_DNS=n.) Options only change while
+    // the server is stopped.
+    esp_netif_dhcps_stop(ap);
+    uint8_t offer_router = 0;
+    ESP_ERROR_CHECK(esp_netif_dhcps_option(ap, ESP_NETIF_OP_SET, ESP_NETIF_ROUTER_SOLICITATION_ADDRESS,
+                                           &offer_router, sizeof(offer_router)));
+    ESP_ERROR_CHECK(esp_netif_dhcps_start(ap));
 
     wifi_init_config_t init = WIFI_INIT_CONFIG_DEFAULT();
     ESP_ERROR_CHECK(esp_wifi_init(&init));

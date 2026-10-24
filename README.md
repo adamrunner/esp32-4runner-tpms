@@ -56,8 +56,7 @@ A dim cyan blip means a TPMS packet was decoded.
 
 Power the board from any USB power bank or phone. It brings up a Wi-Fi access point
 **`4runner-tpms`** (password `tpms4runner`; change both in `main/web.h`). Join it and open
-**http://192.168.4.1**. Your phone may warn that the
-network has no internet; stay connected anyway.
+**http://192.168.4.1**. The AP hands out no default gateway or DNS, so the phone keeps using cellular for internet while joined. It may say "No Internet Connection" for this network; that's expected.
 
 - **Learn one wheel**: tap *Learn* on a wheel, then fill or let air out of that tire. The first
   sensor not already saved on another wheel whose pressure moves 1.5 PSI either way gets saved to
