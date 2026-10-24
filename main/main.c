@@ -167,7 +167,7 @@ static void print_help(void)
            "  b            simulate a BOOT button press\n"
            "  c            clear saved mapping\n"
            "  l<pos>       learn one wheel: next sensor to change 1.5 PSI either way (e.g. lFL; l cancels)\n"
-           "  a<pos> <id>  assign a sensor to a wheel by hand (e.g. aFL 01069354; id 0 = unassign)\n"
+           "  a<pos> <id>  assign a sensor to a wheel by hand (e.g. aFL 0a1b2c3d; id 0 = unassign)\n"
            "  i<id> <psi>  inject a fake PMV-107J reading (hex id), for bench-testing mapping\n"
            "  t<n>         carrier-sense threshold, -7..7 dB (e.g. t3)\n"
            "  g            toggle carrier-sense gating (off = capture everything)\n"

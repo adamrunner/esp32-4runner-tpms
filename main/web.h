@@ -7,7 +7,7 @@
 //   GET  /api/state    tires_state_json()
 //   POST /api/learn?pos=FL
 //   POST /api/cancel
-//   POST /api/assign?pos=FL&id=01069354   (id=0 unassigns)
+//   POST /api/assign?pos=FL&id=0a1b2c3d   (id=0 unassigns)
 //   GET  /log          raw console log page (main/web/log.html)
 //   GET  /api/log?since=N   console output from byte offset N (logbuf.h);
 //                      X-Log-Start = offset actually returned from, X-Log-Next = next N
