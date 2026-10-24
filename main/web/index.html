@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>4Runner TPMS</title>
+<style>
+:root {
+  --bg: #f4f4f1; --card: #fff; --fg: #1c1c1a; --muted: #6b6b66; --line: #deded8;
+  --accent: #1f6feb; --ok: #1a7f37; --warn: #b35900; --hot: #fff4d6;
+}
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #121211; --card: #1d1d1b; --fg: #ecece8; --muted: #9a9a93; --line: #33332f;
+          --accent: #4c8dff; --ok: #3fb950; --warn: #f0883e; --hot: #3a3016; }
+}
+* { box-sizing: border-box; }
+body { margin: 0; padding: 12px 16px 40px; background: var(--bg); color: var(--fg);
+       font: 16px/1.35 -apple-system, system-ui, sans-serif; }
+h1 { font-size: 20px; margin: 4px 0 12px; display: flex; justify-content: space-between; align-items: center; }
+h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 20px 0 8px; }
+#link { font-size: 12px; font-weight: 400; color: var(--muted); }
+#link.down { color: var(--warn); }
+.banner { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; }
+.banner.learning { border-color: var(--accent); }
+.banner b { display: block; }
+.grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 10px; }
+.wheel.learning { border: 2px solid var(--accent); }
+.wheel .name { font-size: 12px; color: var(--muted); }
+.wheel .pos { font-weight: 700; font-size: 18px; }
+.mono { font-family: ui-monospace, Menlo, monospace; }
+.psi { font-size: 22px; font-weight: 600; }
+.small { font-size: 12px; color: var(--muted); }
+button { font: inherit; font-size: 14px; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--line);
+         background: var(--bg); color: var(--fg); min-height: 38px; }
+button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+button:disabled { opacity: .4; }
+.row { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
+.row button { flex: 1; }
+.sensor { margin-bottom: 10px; }
+.sensor.fresh { background: var(--hot); }
+.sensor .top { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.sensor .id { font-size: 18px; font-weight: 600; }
+.tag { font-size: 12px; padding: 1px 6px; border-radius: 6px; border: 1px solid var(--line); }
+.tag.mapped { color: var(--ok); border-color: var(--ok); }
+.tag.moved { color: var(--warn); border-color: var(--warn); }
+.empty { color: var(--muted); padding: 12px 0; }
+</style>
+</head>
+<body>
+<h1>4Runner TPMS <span id="link">connecting…</span></h1>
+<div id="banner" class="banner"></div>
+
+<h2>Saved wheels</h2>
+<div class="grid" id="wheels"></div>
+
+<h2>Sensors heard <span class="small" style="text-transform:none;letter-spacing:0">(newest first)</span></h2>
+<div id="sensors"></div>
+
+<script>
+const NAMES = {FL: "Driver front", FR: "Passenger front", RL: "Driver rear", RR: "Passenger rear"};
+const POS = ["FL", "FR", "RL", "RR"];
+let state = null;
+
+function el(tag, attrs, ...kids) {
+  const e = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs || {})) {
+    if (k === "onclick") e.onclick = v; else if (v !== false && v != null) e.setAttribute(k, v === true ? "" : v);
+  }
+  for (const k of kids) if (k != null) e.append(k);
+  return e;
+}
+const fmtAge = s => s < 60 ? `${s}s ago` : s < 3600 ? `${Math.floor(s / 60)}m ago` : `${Math.floor(s / 3600)}h ago`;
+const signed = x => (x > 0 ? "+" : "") + x.toFixed(1);
+
+async function post(url, confirmMsg) {
+  if (confirmMsg && !confirm(confirmMsg)) return;
+  try {
+    const r = await fetch(url, {method: "POST"});
+    if (!r.ok) alert(await r.text());
+  } catch (e) { alert("Request failed: " + e); }
+  poll();
+}
+
+function render() {
+  const s = state;
+  const bySensor = Object.fromEntries(s.sensors.map(x => [x.id, x]));
+
+  const banner = document.getElementById("banner");
+  banner.className = "banner" + (s.learn || s.mapping ? " learning" : "");
+  banner.replaceChildren();
+  if (s.learn) {
+    banner.append(el("b", {}, `Learning ${s.learn} (${NAMES[s.learn]})`),
+      `Fill or let air out of that tire. The first unsaved sensor that changes by ${s.delta_psi} PSI is saved. ` +
+      `${Math.floor(s.learn_left_s / 60)}m ${s.learn_left_s % 60}s left.`,
+      el("div", {class: "row"}, el("button", {onclick: () => post("/api/cancel")}, "Cancel learn")));
+  } else if (s.mapping) {
+    banner.append(el("b", {}, `4-wheel mapping run: waiting for ${s.map_pos}`),
+      "Started with the BOOT button. Let air out of that tire.",
+      el("div", {class: "row"}, el("button", {onclick: () => post("/api/cancel")}, "Cancel mapping")));
+  } else {
+    banner.append(el("b", {}, s.event || "Ready"),
+      "Tap Learn on a wheel, then fill or deflate that tire. Or save a sensor below by hand.");
+  }
+
+  const wheels = document.getElementById("wheels");
+  wheels.replaceChildren(...POS.map(p => {
+    const id = s.map[p], sen = id && bySensor[id];
+    const learning = s.learn === p;
+    return el("div", {class: "card wheel" + (learning ? " learning" : "")},
+      el("div", {class: "pos"}, p, " ", el("span", {class: "name"}, NAMES[p])),
+      el("div", {class: "mono"}, id || "— not saved —"),
+      sen ? el("div", {}, el("span", {class: "psi"}, sen.psi.toFixed(1)), " PSI ",
+               el("span", {class: "small"}, fmtAge(sen.age_s)))
+          : el("div", {class: "small"}, id ? "not heard since boot" : " "),
+      el("div", {class: "row"},
+        learning
+          ? el("button", {onclick: () => post("/api/cancel")}, "Cancel")
+          : el("button", {class: "primary", disabled: s.mapping, onclick: () => post(`/api/learn?pos=${p}`)}, "Learn"),
+        id ? el("button", {disabled: s.mapping,
+                 onclick: () => post(`/api/assign?pos=${p}&id=0`, `Clear ${p} (${id})?`)}, "Clear") : null));
+  }));
+
+  const list = document.getElementById("sensors");
+  const sensors = [...s.sensors].sort((a, b) => a.age_s - b.age_s);
+  if (!sensors.length) {
+    list.replaceChildren(el("div", {class: "empty"},
+      "No sensors heard yet. Parked sensors go quiet; changing a tire's pressure makes it transmit."));
+    return;
+  }
+  list.replaceChildren(...sensors.map(x => {
+    const moved = x.max_psi - x.min_psi >= s.delta_psi;
+    return el("div", {class: "card sensor" + (x.age_s < 10 ? " fresh" : "")},
+      el("div", {class: "top"},
+        el("span", {class: "id mono"}, x.id),
+        el("span", {},
+          x.pos ? el("span", {class: "tag mapped"}, x.pos) : null, " ",
+          moved ? el("span", {class: "tag moved"}, "pressure moved") : null)),
+      el("div", {},
+        el("span", {class: "psi"}, x.psi.toFixed(1)), " PSI  ",
+        el("span", {class: "small"},
+          `${signed(x.psi - x.first_psi)} since first heard · range ${x.min_psi.toFixed(1)}–${x.max_psi.toFixed(1)}`)),
+      el("div", {class: "small"},
+        `${x.temp_c}°C · ${x.model} · battery ${x.battery_ok == null ? "?" : x.battery_ok ? "ok" : "LOW"} · ` +
+        `${x.count} pkts · ${fmtAge(x.age_s)}`),
+      el("div", {class: "row"}, ...POS.map(p =>
+        el("button", {disabled: s.mapping || x.pos === p,
+          onclick: () => post(`/api/assign?pos=${p}&id=${x.id}`,
+            `Save ${x.id} as ${p} (${NAMES[p]})?` + (s.map[p] ? `\nReplaces ${s.map[p]}.` : ""))},
+          "→ " + p))));
+  }));
+}
+
+let timer;
+async function poll() {
+  clearTimeout(timer);
+  const link = document.getElementById("link");
+  try {
+    const r = await fetch("/api/state", {cache: "no-store"});
+    state = await r.json();
+    link.textContent = "live"; link.className = "";
+    render();
+  } catch (e) {
+    link.textContent = "no connection"; link.className = "down";
+  }
+  timer = setTimeout(poll, 1000);
+}
+poll();
+</script>
+</body>
+</html>

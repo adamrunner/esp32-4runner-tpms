@@ -23,6 +23,7 @@
 #include "tires.h"
 #include "tpms_decode.h"
 #include "tx_test.h"
+#include "web.h"
 
 #define PIN_SCK  12
 #define PIN_MOSI 11
@@ -76,6 +77,10 @@ static void IRAM_ATTR gdo0_isr(void *arg)
 
 static void capture_task(void *arg)
 {
+    // Installed from here so the edge ISR lands on core 1, away from Wi-Fi on core 0.
+    ESP_ERROR_CHECK(gpio_install_isr_service(ESP_INTR_FLAG_IRAM));
+    ESP_ERROR_CHECK(gpio_isr_handler_add(PIN_GDO0, gdo0_isr, NULL));
+
     uint32_t last_ts = 0;
     int last_level = 0;
     bool have_last = false, pending = false;
@@ -361,8 +366,7 @@ void app_main(void)
     xTaskCreate(button_task, "button", 4096, NULL, 3, NULL); // printf needs ~2 KB of stack
     xTaskCreate(console_task, "console", 4096, NULL, 4, NULL);
 
-    ESP_ERROR_CHECK(gpio_install_isr_service(ESP_INTR_FLAG_IRAM));
-    ESP_ERROR_CHECK(gpio_isr_handler_add(PIN_GDO0, gdo0_isr, NULL));
+    web_start();
 
     print_help();
 }

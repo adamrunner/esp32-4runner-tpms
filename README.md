@@ -52,6 +52,22 @@ Mapping sensors to wheels (BOOT button = GPIO0, feedback on the onboard RGB LED)
 
 A dim cyan blip means a TPMS packet was decoded.
 
+## Phone web UI (no laptop)
+
+Power the board from any USB power bank or phone. It brings up a Wi-Fi access point
+**`4runner-tpms`** (password `tpms4runner`; change both in `main/web.h`). Join it and open
+**http://192.168.4.1**. Your phone may warn that the
+network has no internet; stay connected anyway.
+
+- **Learn one wheel**: tap *Learn* on a wheel, then fill or let air out of that tire. The first
+  sensor not already saved on another wheel whose pressure moves 1.5 PSI either way gets saved to
+  flash right away. Do the wheels one at a time, in any order. Each one is saved as soon as it's
+  found. Console equivalent: `lFL` (`l` alone cancels).
+- **Sensors heard** lists every sensor with live PSI, its change since first heard, and when it
+  was last heard. Each card has *→ FL/FR/RL/RR* buttons to save that sensor by hand.
+
+Changing a tire's pressure makes its sensor transmit within seconds, even when parked.
+
 ## Host test
 
 ```fish
