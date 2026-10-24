@@ -71,6 +71,9 @@ display or logger should normally consume.
 | `cancelled` | `step`, `pos` | button pressed during mapping; previous mapping kept |
 | `timeout` | `step`, `pos` | no qualifying drop within 10 min; previous mapping kept |
 | `cleared` | | saved mapping erased (console `c`) |
+| `learn` | `pos`, `delta_psi` | single-wheel learn started (web UI or console `l`) |
+| `learned` | `pos`, `id`, `delta_psi` | a sensor changed ≥ `delta_psi` either way and was saved to `pos` |
+| `cancelled` / `timeout` | `pos` | single-wheel learn ended without a sensor (no `step` field) |
 | `set` | `pos`, `id` | one position assigned by hand and saved (console `a`); `id` `"00000000"` = unassigned |
 
 ## Tunables (`main/tires.h`)

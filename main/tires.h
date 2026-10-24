@@ -18,6 +18,11 @@
 //      mapping cancels; a step that waits longer than MAP_STEP_TIMEOUT_S
 //      aborts. Either way the previous mapping is kept.
 //
+// A single position can also be learned on its own (console 'l'):
+// the first sensor not already saved on another wheel whose pressure moves
+// MAP_DROP_PSI from its baseline, in either direction, is saved to that
+// position right away. Filling a low tire works as well as deflating one.
+//
 // Output is JSON lines on stdout (see docs/message-schema.md).
 
 #include <stdbool.h>
@@ -55,6 +60,12 @@ void tires_clear_mapping(void);
 bool tires_assign(tire_pos_t pos, uint32_t id);
 // Parse "FL"/"fr"/... ; false if not a position name.
 bool tire_pos_from_name(const char *name, tire_pos_t *pos);
+
+// Learn one position (see above). Refused (false) while a mapping run is going.
+// Starting another learn replaces the current one.
+bool tires_learn_start(tire_pos_t pos);
+// Cancel a learn or a mapping run, whichever is active.
+void tires_learn_cancel(void);
 
 // Emit the {"type":"tpms"} snapshot of all four positions.
 void tires_emit_snapshot(void);

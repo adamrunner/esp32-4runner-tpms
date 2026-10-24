@@ -159,6 +159,7 @@ static void print_help(void)
            "  m            start/cancel tire mapping (same as BOOT button)\n"
            "  b            simulate a BOOT button press\n"
            "  c            clear saved mapping\n"
+           "  l<pos>       learn one wheel: next sensor to change 1.5 PSI either way (e.g. lFL; l cancels)\n"
            "  a<pos> <id>  assign a sensor to a wheel by hand (e.g. aFL 01069354; id 0 = unassign)\n"
            "  i<id> <psi>  inject a fake PMV-107J reading (hex id), for bench-testing mapping\n"
            "  t<n>         carrier-sense threshold, -7..7 dB (e.g. t3)\n"
@@ -255,6 +256,15 @@ static void handle_command(char *line)
         }
         uint32_t id = strtoul(line + 3, NULL, 16);
         if (!tires_assign(pos, id)) {
+            ESP_LOGW(TAG, "mapping run in progress; cancel it first (m)");
+        }
+        break;
+    }
+    case 'l': {
+        tire_pos_t pos;
+        if (!tire_pos_from_name(line + 1, &pos)) {
+            tires_learn_cancel();
+        } else if (!tires_learn_start(pos)) {
             ESP_LOGW(TAG, "mapping run in progress; cancel it first (m)");
         }
         break;

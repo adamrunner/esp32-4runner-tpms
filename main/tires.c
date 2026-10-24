@@ -2,6 +2,7 @@
 
 #include <ctype.h>
 #include <inttypes.h>
+#include <math.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -27,6 +28,7 @@ typedef struct {
     int64_t last_seen_us;
     uint32_t count;
     // Mapping run: highest pressure seen since the run started.
+    // Learn: pressure when the learn started (or at the first packet after).
     float baseline_kpa;
     bool has_baseline;
 } sensor_t;
@@ -44,6 +46,9 @@ static uint32_t s_pending[TIRE_COUNT];  // ids assigned so far in this run
 static int64_t s_step_started_us;
 static bool s_candidates_locked; // all four heard before start: ignore newcomers
 static bool s_json = true;       // console 'j': JSON lines on/off
+
+static int s_learn_pos = -1; // position being learned on its own, -1 = none
+static int64_t s_learn_started_us;
 
 const char *tire_pos_name(tire_pos_t pos)
 {
@@ -280,6 +285,51 @@ static void map_on_reading(sensor_t *s)
     }
 }
 
+// ---- Single-tire learn -----------------------------------------------------
+
+static void learn_stop(const char *event)
+{
+    char extra[32];
+    snprintf(extra, sizeof(extra), "\"pos\":\"%s\"", tire_pos_name(s_learn_pos));
+    emit_map_event(event, extra);
+    s_learn_pos = -1;
+    feedback_set_mode(FB_IDLE, 0);
+    feedback_failed();
+}
+
+static void learn_on_reading(sensor_t *s)
+{
+    int pos = position_of(s->id);
+    if (pos >= 0 && pos != s_learn_pos) {
+        return; // already saved on another wheel
+    }
+    if (!s->has_baseline) {
+        s->baseline_kpa = s->kpa;
+        s->has_baseline = true;
+        return;
+    }
+    // Either direction: filling a low tire counts as much as letting air out.
+    float delta_psi = (s->kpa - s->baseline_kpa) / KPA_PER_PSI;
+    if (fabsf(delta_psi) < MAP_DROP_PSI) {
+        return;
+    }
+
+    for (int p = 0; p < TIRE_COUNT; p++) {
+        if (s_map[p] == s->id) {
+            s_map[p] = 0;
+        }
+    }
+    s_map[s_learn_pos] = s->id;
+    save_mapping();
+    char extra[96];
+    snprintf(extra, sizeof(extra), "\"pos\":\"%s\",\"id\":\"%08" PRIx32 "\",\"delta_psi\":%.1f",
+             tire_pos_name(s_learn_pos), s->id, delta_psi);
+    emit_map_event("learned", extra);
+    s_learn_pos = -1;
+    feedback_set_mode(FB_IDLE, 0);
+    feedback_done();
+}
+
 // ---- Public API ------------------------------------------------------------
 
 void tires_init(void)
@@ -327,6 +377,8 @@ void tires_on_reading(const tpms_reading_t *r)
     }
     if (s_mapping) {
         map_on_reading(s);
+    } else if (s_learn_pos >= 0) {
+        learn_on_reading(s);
     }
     xSemaphoreGive(s_lock);
 }
@@ -337,13 +389,18 @@ void tires_tick(void)
     if (s_mapping && esp_timer_get_time() - s_step_started_us > MAP_STEP_TIMEOUT_S * US_PER_S) {
         map_abort("timeout");
     }
+    if (s_learn_pos >= 0 && esp_timer_get_time() - s_learn_started_us > MAP_STEP_TIMEOUT_S * US_PER_S) {
+        learn_stop("timeout");
+    }
     xSemaphoreGive(s_lock);
 }
 
 void tires_button_press(void)
 {
     xSemaphoreTake(s_lock, portMAX_DELAY);
-    if (s_mapping) {
+    if (s_learn_pos >= 0) {
+        learn_stop("cancelled");
+    } else if (s_mapping) {
         map_abort("cancelled");
     } else {
         map_start();
@@ -380,6 +437,10 @@ bool tires_assign(tire_pos_t pos, uint32_t id)
     char extra[48];
     snprintf(extra, sizeof(extra), "\"pos\":\"%s\",\"id\":\"%08" PRIx32 "\"", tire_pos_name(pos), id);
     emit_map_event("set", extra);
+    if ((int)pos == s_learn_pos) {
+        s_learn_pos = -1; // assigned by hand; nothing left to learn
+        feedback_set_mode(FB_IDLE, 0);
+    }
     xSemaphoreGive(s_lock);
     return true;
 }
@@ -397,7 +458,8 @@ void tires_print_table(void)
 {
     xSemaphoreTake(s_lock, portMAX_DELAY);
     int64_t now = esp_timer_get_time();
-    ESP_LOGI(TAG, "mapping %s, step %d", s_mapping ? "RUNNING" : "idle", s_mapping ? s_step + 1 : 0);
+    ESP_LOGI(TAG, "mapping %s, step %d, learn %s", s_mapping ? "RUNNING" : "idle", s_mapping ? s_step + 1 : 0,
+             s_learn_pos >= 0 ? tire_pos_name(s_learn_pos) : "--");
     for (int p = 0; p < TIRE_COUNT; p++) {
         ESP_LOGI(TAG, "  %s = %08" PRIx32, tire_pos_name(p), s_map[p]);
     }
@@ -410,7 +472,47 @@ void tires_print_table(void)
         ESP_LOGI(TAG, "  sensor %08" PRIx32 " %-2s %5.1f psi %4.0f C seen %" PRIu32 "x, %llds ago%s",
                  s->id, pos >= 0 ? tire_pos_name(pos) : "--", s->kpa / KPA_PER_PSI, s->temp_c, s->count,
                  (long long)((now - s->last_seen_us) / US_PER_S),
-                 s_mapping && s->has_baseline ? " [baseline]" : "");
+                 (s_mapping || s_learn_pos >= 0) && s->has_baseline ? " [baseline]" : "");
+    }
+    xSemaphoreGive(s_lock);
+}
+
+bool tires_learn_start(tire_pos_t pos)
+{
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    if (s_mapping) {
+        xSemaphoreGive(s_lock);
+        return false;
+    }
+    int64_t now = esp_timer_get_time();
+    for (int i = 0; i < MAX_SENSORS; i++) {
+        sensor_t *s = &s_sensors[i];
+        s->has_baseline = s->count && now - s->last_seen_us < MAP_CANDIDATE_AGE_S * US_PER_S;
+        s->baseline_kpa = s->kpa;
+    }
+    s_learn_pos = pos;
+    s_learn_started_us = now;
+    char extra[48];
+    snprintf(extra, sizeof(extra), "\"pos\":\"%s\",\"delta_psi\":%.1f", tire_pos_name(pos), MAP_DROP_PSI);
+    emit_map_event("learn", extra);
+    int blinks = 1;
+    for (int i = 0; i < TIRE_COUNT; i++) {
+        if (s_order[i] == pos) {
+            blinks = i + 1;
+        }
+    }
+    feedback_set_mode(FB_MAP_WAIT, blinks);
+    xSemaphoreGive(s_lock);
+    return true;
+}
+
+void tires_learn_cancel(void)
+{
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    if (s_learn_pos >= 0) {
+        learn_stop("cancelled");
+    } else if (s_mapping) {
+        map_abort("cancelled");
     }
     xSemaphoreGive(s_lock);
 }
