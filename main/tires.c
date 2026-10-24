@@ -1,5 +1,6 @@
 #include "tires.h"
 
+#include <ctype.h>
 #include <inttypes.h>
 #include <stdio.h>
 #include <string.h>
@@ -42,6 +43,7 @@ static int s_step;                      // index into s_order
 static uint32_t s_pending[TIRE_COUNT];  // ids assigned so far in this run
 static int64_t s_step_started_us;
 static bool s_candidates_locked; // all four heard before start: ignore newcomers
+static bool s_json = true;       // console 'j': JSON lines on/off
 
 const char *tire_pos_name(tire_pos_t pos)
 {
@@ -123,6 +125,9 @@ static void print_tire_fields(int pos, uint32_t id, const sensor_t *s, int64_t n
 
 static void emit_tire(const sensor_t *s, int64_t now)
 {
+    if (!s_json) {
+        return;
+    }
     printf("{\"type\":\"tire\",");
     print_tire_fields(position_of(s->id), s->id, s, now);
     printf("}\n");
@@ -130,6 +135,11 @@ static void emit_tire(const sensor_t *s, int64_t now)
 
 static void emit_map_event(const char *event, const char *extra)
 {
+    if (!s_json) {
+        // Still show mapping progress (timeouts especially) on the console.
+        ESP_LOGI(TAG, "map %s%s%s", event, extra ? " " : "", extra ? extra : "");
+        return;
+    }
     printf("{\"type\":\"map\",\"event\":\"%s\"%s%s}\n", event, extra ? "," : "", extra ? extra : "");
 }
 
@@ -141,8 +151,21 @@ static void emit_map_wait(void)
     emit_map_event("wait", extra);
 }
 
+void tires_set_json_output(bool on)
+{
+    s_json = on;
+}
+
+bool tires_json_output(void)
+{
+    return s_json;
+}
+
 void tires_emit_snapshot(void)
 {
+    if (!s_json) {
+        return;
+    }
     xSemaphoreTake(s_lock, portMAX_DELAY);
     int64_t now = esp_timer_get_time();
     bool mapped = true;
@@ -326,6 +349,39 @@ void tires_button_press(void)
         map_start();
     }
     xSemaphoreGive(s_lock);
+}
+
+bool tire_pos_from_name(const char *name, tire_pos_t *pos)
+{
+    for (int p = 0; p < TIRE_COUNT; p++) {
+        const char *n = tire_pos_name(p);
+        if (toupper((unsigned char)name[0]) == n[0] && toupper((unsigned char)name[1]) == n[1]) {
+            *pos = p;
+            return true;
+        }
+    }
+    return false;
+}
+
+bool tires_assign(tire_pos_t pos, uint32_t id)
+{
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    if (s_mapping) {
+        xSemaphoreGive(s_lock);
+        return false;
+    }
+    for (int p = 0; p < TIRE_COUNT; p++) {
+        if (id && s_map[p] == id) {
+            s_map[p] = 0; // a sensor can only be on one wheel
+        }
+    }
+    s_map[pos] = id;
+    save_mapping();
+    char extra[48];
+    snprintf(extra, sizeof(extra), "\"pos\":\"%s\",\"id\":\"%08" PRIx32 "\"", tire_pos_name(pos), id);
+    emit_map_event("set", extra);
+    xSemaphoreGive(s_lock);
+    return true;
 }
 
 void tires_clear_mapping(void)

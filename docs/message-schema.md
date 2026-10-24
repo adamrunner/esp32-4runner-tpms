@@ -3,6 +3,8 @@
 The node writes one JSON object per line to its serial console (USB today; RS485,
 ESP-NOW or UART later). Lines that don't start with `{` are human-readable logs
 and should be ignored by consumers. Every object has a `type`.
+The console command `j` turns all JSON output off and on (on at every boot);
+while it is off, `map` events are still printed as plain log lines.
 
 Positions use the driver's-side convention for a US (left-hand-drive) truck:
 
@@ -69,6 +71,7 @@ display or logger should normally consume.
 | `cancelled` | `step`, `pos` | button pressed during mapping; previous mapping kept |
 | `timeout` | `step`, `pos` | no qualifying drop within 10 min; previous mapping kept |
 | `cleared` | | saved mapping erased (console `c`) |
+| `set` | `pos`, `id` | one position assigned by hand and saved (console `a`); `id` `"00000000"` = unassigned |
 
 ## Tunables (`main/tires.h`)
 

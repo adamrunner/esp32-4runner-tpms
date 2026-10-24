@@ -50,9 +50,18 @@ void tires_tick(void);
 // Button: starts mapping when idle, cancels it when running.
 void tires_button_press(void);
 void tires_clear_mapping(void);
+// Assign a sensor to a position by hand and save (id 0 = unassign). The id is
+// removed from any other position. Refused (false) while mapping is running.
+bool tires_assign(tire_pos_t pos, uint32_t id);
+// Parse "FL"/"fr"/... ; false if not a position name.
+bool tire_pos_from_name(const char *name, tire_pos_t *pos);
 
 // Emit the {"type":"tpms"} snapshot of all four positions.
 void tires_emit_snapshot(void);
+// Suppress or restore all JSON lines (tire, tpms, map), e.g. while debugging
+// on the console. On at boot; not persisted. Mapping still runs when off.
+void tires_set_json_output(bool on);
+bool tires_json_output(void);
 // Human-readable sensor table / mapping state (console).
 void tires_print_table(void);
 

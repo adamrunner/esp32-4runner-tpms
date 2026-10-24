@@ -32,8 +32,9 @@ idf.py -p /dev/cu.usbmodem2101 build flash monitor
 ```
 
 Console commands (type + Enter): `s` status, `m` start/cancel mapping, `c` clear mapping,
+`a<pos> <id>` assign a sensor by hand (e.g. `aFL 01069354`),
 `i<id> <psi>` inject a fake reading, `t<n>` carrier-sense threshold (-7..7), `g` toggle CS
-gating, `r` toggle raw row dump, `f<hz>` set frequency, `x[n]` bench TX test, `h` help.
+gating, `r` toggle raw row dump, `j` toggle JSON output, `f<hz>` set frequency, `x[n]` bench TX test, `h` help.
 
 ## Output and tire mapping
 

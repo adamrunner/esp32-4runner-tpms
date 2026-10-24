@@ -109,8 +109,8 @@ static void capture_task(void *arg)
 static void print_status(void)
 {
     static const char *names[] = {"PMV-107J", "Toyota"};
-    ESP_LOGI(TAG, "freq=%" PRIu32 " Hz  cs_thr=%d  gate=%s  rssi=%.1f dBm  CS=%d  edges=%" PRIu32 "  overflows=%" PRIu32,
-             s_freq_hz, s_cs_thr, s_gate ? "on" : "off", cc1101_rssi_dbm(), gpio_get_level(PIN_GDO2),
+    ESP_LOGI(TAG, "freq=%" PRIu32 " Hz  cs_thr=%d  gate=%s  json=%s  rssi=%.1f dBm  CS=%d  edges=%" PRIu32 "  overflows=%" PRIu32,
+             s_freq_hz, s_cs_thr, s_gate ? "on" : "off", tires_json_output() ? "on" : "off", cc1101_rssi_dbm(), gpio_get_level(PIN_GDO2),
              s_edges, s_overflows);
     for (int p = 0; p < 2; p++) {
         tpms_stats_t st;
@@ -159,10 +159,12 @@ static void print_help(void)
            "  m            start/cancel tire mapping (same as BOOT button)\n"
            "  b            simulate a BOOT button press\n"
            "  c            clear saved mapping\n"
+           "  a<pos> <id>  assign a sensor to a wheel by hand (e.g. aFL 01069354; id 0 = unassign)\n"
            "  i<id> <psi>  inject a fake PMV-107J reading (hex id), for bench-testing mapping\n"
            "  t<n>         carrier-sense threshold, -7..7 dB (e.g. t3)\n"
            "  g            toggle carrier-sense gating (off = capture everything)\n"
            "  r            toggle raw row dump\n"
+           "  j            toggle JSON output (tire/tpms/map lines)\n"
            "  f<hz>        set frequency (e.g. f314980000)\n"
            "  d            pin/radio diagnostics\n"
            "  w<addr> <v>  raw register write, hex (e.g. w02 3f)\n"
@@ -189,6 +191,10 @@ static void handle_command(char *line)
         s_raw = !s_raw;
         tpms_set_raw_dump(s_raw);
         ESP_LOGI(TAG, "raw dump %s", s_raw ? "on" : "off");
+        break;
+    case 'j':
+        tires_set_json_output(!tires_json_output());
+        ESP_LOGI(TAG, "json output %s", tires_json_output() ? "on" : "off");
         break;
     case 'f':
         s_freq_hz = strtoul(line + 1, NULL, 10);
@@ -241,6 +247,18 @@ static void handle_command(char *line)
     case 'c':
         tires_clear_mapping();
         break;
+    case 'a': {
+        tire_pos_t pos;
+        if (!tire_pos_from_name(line + 1, &pos)) {
+            ESP_LOGW(TAG, "usage: a<FL|FR|RL|RR> <hex id>");
+            break;
+        }
+        uint32_t id = strtoul(line + 3, NULL, 16);
+        if (!tires_assign(pos, id)) {
+            ESP_LOGW(TAG, "mapping run in progress; cancel it first (m)");
+        }
+        break;
+    }
     case 'i': {
         char *end;
         tpms_reading_t r = {
