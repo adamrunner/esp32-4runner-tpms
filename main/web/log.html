@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TPMS Log</title>
+<style>
+:root {
+  --bg: #f4f4f1; --card: #fff; --fg: #1c1c1a; --muted: #6b6b66; --line: #deded8;
+  --accent: #1f6feb; --warn: #b35900; --err: #c62828; --json: #1a7f37;
+}
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #121211; --card: #1d1d1b; --fg: #ecece8; --muted: #9a9a93; --line: #33332f;
+          --accent: #4c8dff; --warn: #f0883e; --err: #ff6b6b; --json: #3fb950; }
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body { margin: 0; background: var(--bg); color: var(--fg); display: flex; flex-direction: column;
+       font: 15px/1.35 -apple-system, system-ui, sans-serif; }
+header { padding: 10px 16px 8px; border-bottom: 1px solid var(--line); background: var(--card); }
+.bar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.bar + .bar { margin-top: 8px; }
+h1 { font-size: 18px; margin: 0; flex: 1; }
+a { color: var(--accent); text-decoration: none; }
+#link { font-size: 12px; color: var(--muted); }
+#link.down { color: var(--warn); }
+button, input[type=text] { font: inherit; font-size: 14px; padding: 6px 10px; border-radius: 8px;
+         border: 1px solid var(--line); background: var(--bg); color: var(--fg); min-height: 36px; }
+button.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+input[type=text] { flex: 1; min-width: 0; }
+label { font-size: 13px; color: var(--muted); display: flex; align-items: center; gap: 4px; }
+#log { flex: 1; overflow: auto; margin: 0; padding: 8px 16px 24px;
+       font: 12px/1.4 ui-monospace, Menlo, monospace; white-space: pre-wrap; word-break: break-all; }
+#log div.W { color: var(--warn); }
+#log div.E { color: var(--err); }
+#log div.J { color: var(--json); }
+#log div.cmd { color: var(--accent); font-weight: 600; }
+#log div.gap { color: var(--muted); font-style: italic; }
+</style>
+</head>
+<body>
+<header>
+  <div class="bar">
+    <h1>Console log</h1>
+    <span id="link">connecting…</span>
+    <a href="/">← Tires</a>
+  </div>
+  <div class="bar">
+    <button id="pause">Pause</button>
+    <button id="follow" class="on">Follow</button>
+    <button id="clear">Clear</button>
+    <label><input type="checkbox" id="snap"> snapshots</label>
+    <input type="text" id="filter" placeholder="filter" autocapitalize="off" autocorrect="off">
+  </div>
+  <form class="bar" id="cmdform">
+    <input type="text" id="cmd" placeholder="command (h = help)" autocapitalize="off" autocorrect="off" spellcheck="false">
+    <button>Run</button>
+    <button type="button" data-cmd="s">s</button>
+    <button type="button" data-cmd="d">d</button>
+    <button type="button" data-cmd="r">r</button>
+  </form>
+</header>
+<pre id="log"></pre>
+
+<script>
+const MAX_LINES = 4000;
+const logEl = document.getElementById("log");
+const link = document.getElementById("link");
+let pos = null;      // next byte offset to ask for; null = whatever the device still holds
+let carry = "";      // partial line waiting for its newline
+let paused = false, follow = true;
+
+const isSnapshot = l => l.startsWith('{"type":"tpms"');
+function lineClass(l) {
+  if (l.startsWith("> ")) return "cmd";
+  if (l.startsWith("{")) return "J";
+  if (/^[WE] \(/.test(l)) return l[0];
+  return "";
+}
+function visible(div) {
+  const f = document.getElementById("filter").value.toLowerCase();
+  if (div.dataset.snap && !document.getElementById("snap").checked) return false;
+  return !f || div.textContent.toLowerCase().includes(f);
+}
+function addLine(text, cls) {
+  const div = document.createElement("div");
+  div.textContent = text;
+  if (cls) div.className = cls;
+  if (isSnapshot(text)) div.dataset.snap = "1";
+  div.hidden = !visible(div);
+  logEl.append(div);
+}
+function refilter() {
+  for (const d of logEl.children) d.hidden = !visible(d);
+  if (follow) logEl.scrollTop = logEl.scrollHeight;
+}
+
+function ingest(text) {
+  const lines = (carry + text).replace(/\r/g, "").split("\n");
+  carry = lines.pop();
+  for (const l of lines) addLine(l, lineClass(l));
+  while (logEl.childElementCount > MAX_LINES) logEl.firstChild.remove();
+}
+
+let timer;
+async function poll() {
+  clearTimeout(timer);
+  try {
+    for (;;) {
+      const r = await fetch("/api/log" + (pos == null ? "" : "?since=" + pos), {cache: "no-store"});
+      const start = +r.headers.get("X-Log-Start"), next = +r.headers.get("X-Log-Next");
+      const text = await r.text();
+      if (pos != null && start !== pos) {
+        carry = "";
+        addLine(start > pos ? `… ${start - pos} bytes dropped (device buffer wrapped) …`
+                            : "… device restarted …", "gap");
+      }
+      pos = next;
+      if (!text) break;
+      ingest(text);
+    }
+    link.textContent = "live"; link.className = "";
+    if (follow) logEl.scrollTop = logEl.scrollHeight;
+  } catch (e) {
+    link.textContent = "no connection"; link.className = "down";
+  }
+  if (!paused) timer = setTimeout(poll, 700);
+}
+
+async function run(cmd) {
+  if (!cmd) return;
+  try {
+    const r = await fetch("/api/cmd", {method: "POST", body: cmd});
+    if (!r.ok) addLine(`! ${cmd}: ${await r.text()}`, "E");
+  } catch (e) { addLine(`! ${cmd}: ${e}`, "E"); }
+  if (!paused) setTimeout(poll, 200);
+}
+
+document.getElementById("pause").onclick = e => {
+  paused = !paused;
+  e.target.classList.toggle("on", paused);
+  e.target.textContent = paused ? "Paused" : "Pause";
+  if (!paused) poll();
+};
+document.getElementById("follow").onclick = e => {
+  follow = !follow;
+  e.target.classList.toggle("on", follow);
+  if (follow) logEl.scrollTop = logEl.scrollHeight;
+};
+document.getElementById("clear").onclick = () => logEl.replaceChildren();
+document.getElementById("snap").onchange = refilter;
+document.getElementById("filter").oninput = refilter;
+document.getElementById("cmdform").onsubmit = e => {
+  e.preventDefault();
+  const input = document.getElementById("cmd");
+  run(input.value.trim());
+  input.value = "";
+};
+for (const b of document.querySelectorAll("[data-cmd]")) b.onclick = () => run(b.dataset.cmd);
+// Scrolling up by hand stops following; scrolling back to the bottom resumes.
+logEl.addEventListener("scroll", () => {
+  const atBottom = logEl.scrollHeight - logEl.scrollTop - logEl.clientHeight < 30;
+  if (atBottom !== follow) document.getElementById("follow").click();
+});
+poll();
+</script>
+</body>
+</html>

@@ -67,6 +67,10 @@ Power the board from any USB power bank or phone. It brings up a Wi-Fi access po
 
 Changing a tire's pressure makes its sensor transmit within seconds, even when parked.
 
+**Log** (top right, or http://192.168.4.1/log) shows the raw console output: the last 32 KB
+of `ESP_LOG` and JSON lines, kept in RAM. It has a filter and a command box (`s`, `d`, `r`, ...)
+that runs console commands, with their output shown in the log.
+
 ## Host test
 
 ```fish

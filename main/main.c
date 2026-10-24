@@ -16,8 +16,10 @@
 #include "esp_timer.h"
 #include "feedback.h"
 #include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
 #include "freertos/task.h"
 #include "hal/gpio_ll.h"
+#include "logbuf.h"
 #include "nvs_flash.h"
 #include "soc/gpio_struct.h"
 #include "tires.h"
@@ -295,6 +297,17 @@ static void handle_command(char *line)
     }
 }
 
+static SemaphoreHandle_t s_cmd_lock; // USB console and web UI both run commands
+
+static void run_command(const char *line)
+{
+    char copy[32];
+    snprintf(copy, sizeof(copy), "%s", line);
+    xSemaphoreTake(s_cmd_lock, portMAX_DELAY);
+    handle_command(copy);
+    xSemaphoreGive(s_cmd_lock);
+}
+
 static void console_task(void *arg)
 {
     char line[32];
@@ -307,7 +320,7 @@ static void console_task(void *arg)
         if (c == '\r' || c == '\n') {
             line[len] = 0;
             if (len) {
-                handle_command(line);
+                run_command(line);
             }
             len = 0;
         } else if (len < sizeof(line) - 1) {
@@ -321,6 +334,8 @@ void app_main(void)
     usb_serial_jtag_driver_config_t usb_cfg = USB_SERIAL_JTAG_DRIVER_CONFIG_DEFAULT();
     ESP_ERROR_CHECK(usb_serial_jtag_driver_install(&usb_cfg));
     usb_serial_jtag_vfs_use_driver();
+    logbuf_init();
+    s_cmd_lock = xSemaphoreCreateMutex();
 
     esp_err_t nvs = nvs_flash_init();
     if (nvs == ESP_ERR_NVS_NO_FREE_PAGES || nvs == ESP_ERR_NVS_NEW_VERSION_FOUND) {
@@ -366,7 +381,7 @@ void app_main(void)
     xTaskCreate(button_task, "button", 4096, NULL, 3, NULL); // printf needs ~2 KB of stack
     xTaskCreate(console_task, "console", 4096, NULL, 4, NULL);
 
-    web_start();
+    web_start(run_command);
 
     print_help();
 }

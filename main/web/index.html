@@ -20,6 +20,7 @@ h1 { font-size: 20px; margin: 4px 0 12px; display: flex; justify-content: space-
 h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 20px 0 8px; }
 #link { font-size: 12px; font-weight: 400; color: var(--muted); }
 #link.down { color: var(--warn); }
+#loglink { font-size: 14px; font-weight: 400; color: var(--accent); text-decoration: none; }
 .banner { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; }
 .banner.learning { border-color: var(--accent); }
 .banner b { display: block; }
@@ -48,7 +49,7 @@ button:disabled { opacity: .4; }
 </style>
 </head>
 <body>
-<h1>4Runner TPMS <span id="link">connecting…</span></h1>
+<h1>4Runner TPMS <span><a href="/log" id="loglink">Log</a> · <span id="link">connecting…</span></span></h1>
 <div id="banner" class="banner"></div>
 
 <h2>Saved wheels</h2>
