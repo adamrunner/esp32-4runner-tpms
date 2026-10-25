@@ -1,0 +1,180 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TPMS Wi-Fi</title>
+<style>
+:root {
+  --bg: #f4f4f1; --card: #fff; --fg: #1c1c1a; --muted: #6b6b66; --line: #deded8;
+  --accent: #1f6feb; --ok: #1a7f37; --warn: #b35900; --err: #c62828;
+}
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #121211; --card: #1d1d1b; --fg: #ecece8; --muted: #9a9a93; --line: #33332f;
+          --accent: #4c8dff; --ok: #3fb950; --warn: #f0883e; --err: #ff6b6b; }
+}
+* { box-sizing: border-box; }
+body { margin: 0; padding: 12px 16px 40px; background: var(--bg); color: var(--fg);
+       font: 16px/1.35 -apple-system, system-ui, sans-serif; }
+h1 { font-size: 20px; margin: 4px 0 12px; display: flex; justify-content: space-between; align-items: center; }
+h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 20px 0 8px; }
+a { color: var(--accent); text-decoration: none; }
+#link { font-size: 12px; font-weight: 400; color: var(--muted); }
+#link.down { color: var(--warn); }
+.nav { font-size: 14px; font-weight: 400; }
+.card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; }
+.card + .card { margin-top: 10px; }
+.card b { display: block; }
+.mono { font-family: ui-monospace, Menlo, monospace; }
+.small { font-size: 12px; color: var(--muted); }
+.state { font-weight: 600; }
+.state.connected { color: var(--ok); }
+.state.connecting { color: var(--warn); }
+.state.failed { color: var(--err); }
+button, input { font: inherit; font-size: 15px; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--line);
+                background: var(--bg); color: var(--fg); min-height: 40px; }
+button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+button:disabled { opacity: .4; }
+input { width: 100%; }
+label { display: block; font-size: 13px; color: var(--muted); margin: 10px 0 4px; }
+.row { display: flex; gap: 6px; margin-top: 10px; flex-wrap: wrap; }
+.row button { flex: 1; }
+.net { display: flex; justify-content: space-between; align-items: center; width: 100%; text-align: left;
+       background: var(--card); margin-bottom: 6px; gap: 8px; }
+.net .ssid { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.net .meta { flex: none; font-size: 12px; color: var(--muted); }
+.empty { color: var(--muted); padding: 8px 0; }
+</style>
+</head>
+<body>
+<h1>Wi-Fi <span class="nav"><a href="/">← Tires</a> · <span id="link">connecting…</span></span></h1>
+
+<h2>Saved network</h2>
+<div class="card" id="sta"></div>
+
+<h2>Join a network</h2>
+<div class="card">
+  <form id="joinform">
+    <label for="ssid">Network name (SSID)</label>
+    <input id="ssid" autocapitalize="off" autocorrect="off" spellcheck="false" maxlength="32" required>
+    <label for="pass">Password <span class="small">(blank for an open network)</span></label>
+    <input id="pass" type="password" autocapitalize="off" autocorrect="off" spellcheck="false" maxlength="63">
+    <label style="display:flex;gap:6px;align-items:center;margin-top:6px">
+      <input type="checkbox" id="show" style="width:auto;min-height:0"> show password</label>
+    <div class="row"><button class="primary" id="join">Join</button></div>
+  </form>
+</div>
+
+<h2>Nearby <button id="scan" style="float:right;min-height:30px;padding:3px 10px;font-size:13px">Scan</button></h2>
+<div id="nets"><div class="empty">Tap Scan to look for networks (takes a few seconds).</div></div>
+
+<h2>This board's own network</h2>
+<div class="card" id="ap"></div>
+
+<script>
+function el(tag, attrs, ...kids) {
+  const e = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs || {})) {
+    if (k === "onclick") e.onclick = v; else if (v !== false && v != null) e.setAttribute(k, v === true ? "" : v);
+  }
+  for (const k of kids) if (k != null) e.append(k);
+  return e;
+}
+const bars = rssi => rssi >= -55 ? "▂▄▆█" : rssi >= -67 ? "▂▄▆" : rssi >= -78 ? "▂▄" : "▂";
+const STATE_TEXT = {off: "No network saved", connecting: "Connecting…", connected: "Connected", failed: "Can't connect"};
+
+function render(w) {
+  const s = w.sta, sta = document.getElementById("sta");
+  sta.replaceChildren();
+  if (!s.ssid) {
+    sta.append(el("b", {}, STATE_TEXT.off),
+      el("div", {class: "small"}, "The board only runs its own network. Join one below to also reach it from home Wi-Fi."));
+  } else {
+    sta.append(el("div", {}, el("span", {class: "mono"}, s.ssid), " · ",
+                  el("span", {class: "state " + s.state}, STATE_TEXT[s.state])));
+    if (s.state === "connected") {
+      const url = `http://${s.ip}/`;
+      const named = `http://${w.mdns}/`;
+      sta.append(el("div", {}, "On that network: ", el("a", {href: named, class: "mono"}, named),
+                    " or ", el("a", {href: url, class: "mono"}, url)),
+        el("div", {class: "small"}, `signal ${s.rssi} dBm ${bars(s.rssi)} · channel ${s.channel}`));
+    } else if (s.error) {
+      sta.append(el("div", {class: "small"}, `Last error: ${s.error}. It keeps retrying while this network is saved.`));
+    } else if (s.state !== "connected") {
+      sta.append(el("div", {class: "small"}, "Retries every 30 s while out of range."));
+    }
+    sta.append(el("div", {class: "row"}, el("button", {onclick: forget}, "Forget network")));
+  }
+  document.getElementById("ap").replaceChildren(
+    el("div", {}, el("span", {class: "mono"}, w.ap.ssid), " · always on"),
+    el("div", {}, el("a", {href: `http://${w.ap.ip}/`, class: "mono"}, `http://${w.ap.ip}/`)),
+    el("div", {class: "small"}, "While connected to a saved network, this network moves to that network's " +
+      "channel, so phones joined here may drop for a moment when it connects."));
+}
+
+async function forget() {
+  if (!confirm("Forget the saved network? The board's own network stays up.")) return;
+  try { await fetch("/api/wifi/forget", {method: "POST"}); } catch (e) { alert("Request failed: " + e); }
+  poll();
+}
+
+document.getElementById("show").onchange = e => {
+  document.getElementById("pass").type = e.target.checked ? "text" : "password";
+};
+
+document.getElementById("joinform").onsubmit = async e => {
+  e.preventDefault();
+  const ssid = document.getElementById("ssid").value, pass = document.getElementById("pass").value;
+  if (pass && pass.length < 8) { alert("WPA passwords are at least 8 characters."); return; }
+  const btn = document.getElementById("join");
+  btn.disabled = true;
+  try {
+    const r = await fetch("/api/wifi/connect", {method: "POST", body: ssid + "\n" + pass});
+    if (!r.ok) alert(await r.text());
+    else document.getElementById("pass").value = "";
+  } catch (e) {
+    // Joining can move this board's own network to another channel; the phone may drop briefly.
+    alert("Lost the connection to the board. It may have switched channels; reconnect and check the status.");
+  }
+  btn.disabled = false;
+  poll();
+};
+
+document.getElementById("scan").onclick = async e => {
+  const btn = e.target, nets = document.getElementById("nets");
+  btn.disabled = true; btn.textContent = "Scanning…";
+  try {
+    const r = await fetch("/api/wifi/scan", {cache: "no-store"});
+    if (!r.ok) throw new Error(await r.text());
+    const list = await r.json();
+    nets.replaceChildren(...(list.length ? list.map(n =>
+      el("button", {class: "net", type: "button", onclick: () => {
+          document.getElementById("ssid").value = n.ssid;
+          document.getElementById("pass").focus();
+        }},
+        el("span", {class: "ssid"}, n.ssid),
+        el("span", {class: "meta"}, (n.secure ? "🔒 " : "open ") + bars(n.rssi))))
+      : [el("div", {class: "empty"}, "No networks found.")]));
+  } catch (err) {
+    nets.replaceChildren(el("div", {class: "empty"}, String(err.message || err)));
+  }
+  btn.disabled = false; btn.textContent = "Scan";
+};
+
+let timer;
+async function poll() {
+  clearTimeout(timer);
+  const link = document.getElementById("link");
+  try {
+    const r = await fetch("/api/wifi", {cache: "no-store"});
+    render(await r.json());
+    link.textContent = "live"; link.className = "";
+  } catch (e) {
+    link.textContent = "no connection"; link.className = "down";
+  }
+  timer = setTimeout(poll, 2000);
+}
+poll();
+</script>
+</body>
+</html>

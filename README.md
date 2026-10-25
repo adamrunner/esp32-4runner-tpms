@@ -55,7 +55,7 @@ A dim cyan blip means a TPMS packet was decoded.
 ## Phone web UI (no laptop)
 
 Power the board from any USB power bank or phone. It brings up a Wi-Fi access point
-**`4runner-tpms`** (password `tpms4runner`; change both in `main/web.h`). Join it and open
+**`4runner-tpms`** (password `tpms4runner`; change both in `main/wifi.h`). Join it and open
 **http://192.168.4.1**. The AP hands out no default gateway or DNS, so the phone keeps using cellular for internet while joined. It may say "No Internet Connection" for this network; that's expected.
 
 - **Learn one wheel**: tap *Learn* on a wheel, then fill or let air out of that tire. The first
@@ -66,6 +66,14 @@ Power the board from any USB power bank or phone. It brings up a Wi-Fi access po
   was last heard. Each card has *→ FL/FR/RL/RR* buttons to save that sensor by hand.
 
 Changing a tire's pressure makes its sensor transmit within seconds, even when parked.
+
+**Wi-Fi** (top right, or http://192.168.4.1/wifi) joins the board to another network, e.g. home
+Wi-Fi, so you can reach the UI from a laptop without switching networks. Tap *Scan*, pick a
+network, enter its password, *Join*. After that, open **http://tpms.local** (mDNS; also works
+on the AP), or use the IP shown on the page; the router lists the board as `4runner-tpms`. The
+network is saved to flash and rejoined on boot; out of range, it retries every 30 s. The board's own access point stays up the whole time, so the
+phone UI still works in the truck. While joined, the AP moves to the router's channel, so a phone
+on the AP may drop for a moment when the board connects. *Forget network* removes it.
 
 **Log** (top right, or http://192.168.4.1/log) shows the raw console output: the last 32 KB
 of `ESP_LOG` and JSON lines, kept in RAM. It has a filter and a command box (`s`, `d`, `r`, ...)

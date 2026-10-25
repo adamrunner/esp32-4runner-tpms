@@ -5,24 +5,24 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "esp_event.h"
 #include "esp_http_server.h"
-#include "esp_log.h"
-#include "esp_netif.h"
-#include "esp_wifi.h"
 #include "logbuf.h"
 #include "tires.h"
+#include "wifi.h"
 
 #define STATE_BUF_LEN 6144 // 16 sensors at ~220 bytes each, plus the header
 #define LOG_CHUNK     8192 // per /api/log response; the page asks again until caught up
 #define CMD_MAX       32   // same as the USB console's line buffer
-
-static const char *TAG = "web";
+#define WIFI_JSON_LEN 384
+#define SCAN_BUF_LEN  6144 // 24 networks, even with fully escaped SSIDs
+#define WIFI_BODY_MAX 128  // 32-byte SSID + newline + 63-char password
 
 extern const char index_html_start[] asm("_binary_index_html_start");
 extern const char index_html_end[] asm("_binary_index_html_end");
 extern const char log_html_start[] asm("_binary_log_html_start");
 extern const char log_html_end[] asm("_binary_log_html_end");
+extern const char wifi_html_start[] asm("_binary_wifi_html_start");
+extern const char wifi_html_end[] asm("_binary_wifi_html_end");
 
 static web_cmd_fn s_cmd;
 
@@ -140,48 +140,84 @@ static esp_err_t assign_post(httpd_req_t *req)
     return reply(req, ok, ok ? "saved" : "a mapping run is in progress; cancel it first");
 }
 
-static void start_ap(void)
+static esp_err_t wifi_page_get(httpd_req_t *req)
 {
-    ESP_ERROR_CHECK(esp_netif_init());
-    ESP_ERROR_CHECK(esp_event_loop_create_default());
-    esp_netif_t *ap = esp_netif_create_default_wifi_ap();
-    // No router option in the DHCP offer: with no default gateway on this
-    // network, phones keep using cellular for internet while joined. (DNS is
-    // off too, via CONFIG_LWIP_DHCPS_ADD_DNS=n.) Options only change while
-    // the server is stopped.
-    esp_netif_dhcps_stop(ap);
-    uint8_t offer_router = 0;
-    ESP_ERROR_CHECK(esp_netif_dhcps_option(ap, ESP_NETIF_OP_SET, ESP_NETIF_ROUTER_SOLICITATION_ADDRESS,
-                                           &offer_router, sizeof(offer_router)));
-    ESP_ERROR_CHECK(esp_netif_dhcps_start(ap));
+    httpd_resp_set_type(req, "text/html");
+    return httpd_resp_send(req, wifi_html_start, wifi_html_end - wifi_html_start - 1);
+}
 
-    wifi_init_config_t init = WIFI_INIT_CONFIG_DEFAULT();
-    ESP_ERROR_CHECK(esp_wifi_init(&init));
-    wifi_config_t cfg = {
-        .ap = {
-            .ssid = WEB_AP_SSID,
-            .ssid_len = strlen(WEB_AP_SSID),
-            .password = WEB_AP_PASSWORD,
-            .channel = WEB_AP_CHANNEL,
-            .max_connection = 4,
-            .authmode = WIFI_AUTH_WPA2_PSK,
-        },
-    };
-    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_AP));
-    ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_AP, &cfg));
-    ESP_ERROR_CHECK(esp_wifi_start());
-    ESP_LOGI(TAG, "AP \"%s\" up; open http://192.168.4.1", WEB_AP_SSID);
+static esp_err_t wifi_get(httpd_req_t *req)
+{
+    char buf[WIFI_JSON_LEN];
+    size_t n = wifi_status_json(buf, sizeof(buf));
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+    return n ? httpd_resp_send(req, buf, n) : httpd_resp_send_500(req);
+}
+
+static esp_err_t wifi_scan_get(httpd_req_t *req)
+{
+    char *buf = malloc(SCAN_BUF_LEN);
+    if (!buf) {
+        return httpd_resp_send_500(req);
+    }
+    size_t n = wifi_scan_json(buf, SCAN_BUF_LEN);
+    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+    esp_err_t err;
+    if (n) {
+        httpd_resp_set_type(req, "application/json");
+        err = httpd_resp_send(req, buf, n);
+    } else {
+        err = reply(req, false, "scan failed; the radio may be busy joining a network. Try again in a few seconds.");
+    }
+    free(buf);
+    return err;
+}
+
+static esp_err_t wifi_connect_post(httpd_req_t *req)
+{
+    char body[WIFI_BODY_MAX];
+    if (req->content_len == 0 || req->content_len >= sizeof(body)) {
+        return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "body = ssid, newline, password");
+    }
+    size_t got = 0;
+    while (got < req->content_len) {
+        int n = httpd_req_recv(req, body + got, req->content_len - got);
+        if (n <= 0) {
+            return httpd_resp_send_500(req);
+        }
+        got += n;
+    }
+    body[got] = 0;
+    char *pass = strchr(body, '\n');
+    if (pass) {
+        *pass++ = 0;
+    } else {
+        pass = "";
+    }
+    if (!wifi_connect(body, pass)) {
+        return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST,
+                                   "SSID must be 1-32 bytes; password empty (open network) or 8-63 chars");
+    }
+    return reply(req, true, "joining");
+}
+
+static esp_err_t wifi_forget_post(httpd_req_t *req)
+{
+    wifi_forget();
+    return reply(req, true, "forgotten");
 }
 
 void web_start(web_cmd_fn cmd)
 {
     s_cmd = cmd;
-    start_ap();
+    wifi_start();
 
     httpd_handle_t server;
     httpd_config_t cfg = HTTPD_DEFAULT_CONFIG();
     cfg.lru_purge_enable = true; // phones keep idle sockets open
     cfg.stack_size = 6144;       // /api/cmd runs console commands, which printf floats
+    cfg.max_uri_handlers = 16;
     ESP_ERROR_CHECK(httpd_start(&server, &cfg));
 
     static const httpd_uri_t uris[] = {
@@ -193,6 +229,11 @@ void web_start(web_cmd_fn cmd)
         {.uri = "/log", .method = HTTP_GET, .handler = log_page_get},
         {.uri = "/api/log", .method = HTTP_GET, .handler = log_get},
         {.uri = "/api/cmd", .method = HTTP_POST, .handler = cmd_post},
+        {.uri = "/wifi", .method = HTTP_GET, .handler = wifi_page_get},
+        {.uri = "/api/wifi", .method = HTTP_GET, .handler = wifi_get},
+        {.uri = "/api/wifi/scan", .method = HTTP_GET, .handler = wifi_scan_get},
+        {.uri = "/api/wifi/connect", .method = HTTP_POST, .handler = wifi_connect_post},
+        {.uri = "/api/wifi/forget", .method = HTTP_POST, .handler = wifi_forget_post},
     };
     for (size_t i = 0; i < sizeof(uris) / sizeof(uris[0]); i++) {
         ESP_ERROR_CHECK(httpd_register_uri_handler(server, &uris[i]));
