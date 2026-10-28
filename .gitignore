@@ -5,3 +5,4 @@ managed_components/
 captures/
 .cache/
 sdkconfig
+__pycache__/
